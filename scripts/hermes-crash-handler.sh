@@ -9,9 +9,8 @@ CRASH_LOG="/var/tmp/hermes-crash.log"
 CRASH_COUNT_FILE="/var/tmp/hermes-crash-count.txt"
 HEALTH_STATE="/var/tmp/pi-health-state.json"
 PENDING_REPORTS="/var/tmp/pi-health-pending-reports.txt"
-CRASH_THRESHOLD=5          # Alert after this many crashes in WINDOW
+CRASH_THRESHOLD=5          # Reboot + alert after this many crashes in WINDOW
 CRASH_WINDOW_SECONDS=600   # 10 minute window
-REBOOT_THRESHOLD=10        # Auto-reboot if this many crashes in WINDOW
 
 TIMESTAMP=$(date -Is)
 
@@ -69,12 +68,29 @@ CRASH_REPORT="⚠️ *Hermes Gateway crashed*
 
 echo "$CRASH_REPORT" >> "$PENDING_REPORTS"
 
-# Critical: too many crashes → queue reboot suggestion
-if [ "$COUNT" -ge "$REBOOT_THRESHOLD" ]; then
-    echo "🚨 *CRITICAL:* Hermes crashed $COUNT times in $(($WINDOW_AGE / 60)) min. Possible system instability — consider reboot." >> "$PENDING_REPORTS"
-    echo "[$TIMESTAMP] CRITICAL: $COUNT crashes in window — reboot threshold reached" >> "$CRASH_LOG"
-elif [ "$COUNT" -ge "$CRASH_THRESHOLD" ]; then
-    echo "⚠️ Hermes crashed $COUNT times in $(($WINDOW_AGE / 60)) min — if it continues, a reboot may be needed." >> "$PENDING_REPORTS"
+# Crash loop detected → REBOOT the Pi
+if [ "$COUNT" -ge "$CRASH_THRESHOLD" ]; then
+    REBOOT_MSG="🚨 *CRITICAL: Hermes crash loop detected — rebooting Pi*
+• $COUNT crashes in $(($WINDOW_AGE / 60)) min
+• Last exit code: $EXIT_CODE
+• Time: $TIMESTAMP
+• Rebooting now to recover system stability..."
+
+    echo "$REBOOT_MSG" >> "$PENDING_REPORTS"
+    echo "[$TIMESTAMP] CRITICAL: $COUNT crashes in window — triggering safe reboot" >> "$CRASH_LOG"
+
+    # Try to send Telegram alert before rebooting
+    if command -v hermes &>/dev/null && ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1; then
+        hermes send --to telegram "$REBOOT_MSG" 2>/dev/null || true
+    fi
+
+    # Use safe reboot script or fallback to direct reboot
+    if [ -f /home/pi/reboot ]; then
+        /home/pi/reboot "hermes crash loop: $COUNT crashes in $(($WINDOW_AGE / 60)) min"
+    else
+        sync
+        sudo reboot
+    fi
 fi
 
 # If systemd restarts Hermes (which it will in 5s), the health monitor

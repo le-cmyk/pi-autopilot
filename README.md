@@ -45,8 +45,8 @@ Your Pi runs itself. This system handles:
 │  🧠 HERMES SELF-HEALING (systemd)                        │
 │  ├── hermes-gateway.service (Restart=always, 5s delay)   │
 │  ├── Crash handler logs death, tracks count              │
-│  ├── Crash loop detection (>5 in 10 min = alert)         │
-│  └── Pending reports flushed when Hermes is back online  │
+│  ├── Crash loop detection (>5 in 10 min = REBOOT Pi)    │
+│  ├── Sends Telegram alert before rebooting               │
 │                                                         │
 │  ⚡ HARDWARE WATCHDOG (systemd, 60s timeout)              │
 │  └── Kernel panic → reboot in 10s                        │
@@ -107,7 +107,7 @@ pi-autopilot/
 ## Key Design Decisions
 
 ### Why systemd manages Hermes (not bare process)
-When Hermes gateway runs as a bare `hermes gateway run` process and crashes, it stays dead until someone notices. systemd's `Restart=always` restarts it within 5 seconds. The crash handler logs every death to `/var/tmp/hermes-crash.log` and tracks crash counts. If Hermes crashes more than 5 times in 10 minutes, the health monitor sends an alert (crash loop detected). If it exceeds 10, systemd stops restarting (StartLimitBurst) to prevent disk flooding — manual intervention required.
+When Hermes gateway runs as a bare `hermes gateway run` process and crashes, it stays dead until someone notices. systemd's `Restart=always` restarts it within 5 seconds. The crash handler logs every death to `/var/tmp/hermes-crash.log` and tracks crash counts in a 10-minute sliding window. **If Hermes crashes 5+ times in 10 minutes, the crash handler automatically reboots the Pi** and sends a Telegram alert before the reboot. This prevents infinite crash loops from silently degrading the system.
 
 ### Why WiFi Power Save is OFF
 The Broadcom BCM4345/6 driver's power saving mode causes SDIO bus hangs on Pi 5, leading to full system freezes. Disabled permanently via NetworkManager config.

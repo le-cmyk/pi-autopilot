@@ -58,7 +58,7 @@ hermes:
     service: hermes-gateway.service
     restart_policy: always
     restart_sec: 5
-    crash_threshold: 5       # alert after this many crashes in window
+    crash_threshold: 5       # reboot Pi + alert after this many crashes in 10-min window
     crash_window_sec: 600    # 10 minute crash window
     crash_log: /var/tmp/hermes-crash.log
     crash_handler: /home/pi/.hermes/scripts/hermes-crash-handler.sh
@@ -106,8 +106,7 @@ known_issues:
   - symptom: "Hermes gateway crashes repeatedly ('Sorry, I encountered an unexpected error')"
     root_cause: "Gateway process died — possible causes: OOM, config corruption, dependency crash, watchdog timeout"
     prevention: "systemd hermes-gateway.service with Restart=always auto-recovers within 5s"
-    fix: "Check crash log: tail /var/tmp/hermes-crash.log"
-    escalation: "If crash loop detected (>5 crashes in 10 min): systemd stops restarting. Run: sudo systemctl reset-failed hermes-gateway && sudo systemctl start hermes-gateway"
+    escalation: "If 5+ crashes in 10 min: crash handler AUTO-REBOOTS the Pi + sends Telegram alert"
     monitoring: "pi-health-monitor checks hermes-gateway.service status every 10 min"
 
   - symptom: "Docker containers not starting"
