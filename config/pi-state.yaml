@@ -58,8 +58,10 @@ hermes:
     service: hermes-gateway.service
     restart_policy: always
     restart_sec: 5
-    crash_threshold: 5       # reboot Pi + alert after this many crashes in 10-min window
-    crash_window_sec: 600    # 10 minute crash window
+    crash_threshold: 5        # reboot Pi + alert after this many crashes in 10-min window
+    crash_window_sec: 600     # 10 minute crash window
+    max_reboots: 3            # max reboots in reboot_window before fallback to alert-only
+    reboot_window_sec: 1800   # 30 minute reboot window
     crash_log: /var/tmp/hermes-crash.log
     crash_handler: /home/pi/.hermes/scripts/hermes-crash-handler.sh
   cron_jobs:
