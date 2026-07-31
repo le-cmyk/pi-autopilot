@@ -92,23 +92,84 @@ hermes:
   backup_dir: /home/pi/.hermes/backups
   backup_manifest: /home/pi/.hermes/backups/critical-files.sha256
 
-# Health thresholds
+# Health thresholds — comprehensive, catches everything before it becomes a freeze
 thresholds:
+  # Temperature
   temp_warn: 75
   temp_alert: 80
   temp_critical: 85
+  # Memory (free RAM, MB)
   mem_free_min_mb: 200
   mem_critical_mb: 100
+  # Swap — if swap usage is rising, memory pressure is building toward OOM
+  swap_used_warn_mb: 512       # swap creeping up = memory pressure
+  swap_used_alert_mb: 1024     # heavy swap = OOM imminent
+  swap_used_critical_mb: 1800  # swap nearly full (2GB total)
+  # Disk
   disk_warn_pct: 85
   disk_alert_pct: 90
   disk_critical_pct: 95
+  # NVMe SMART
   nvme_spare_min_pct: 10       # alert if spare blocks drop below 10%
   nvme_media_errors_max: 0     # any media error = alert
   unsafe_shutdowns_increase: 1  # alert if count increases
+  # Load average (1-min, relative to 4 cores)
+  load_warn: 3.0               # 75% of 4 cores — system under load
+  load_alert: 4.5              # over 100% of cores — processes waiting
+  load_critical: 8.0           # 2x cores — system severely overloaded
+  # I/O wait — high iowait = NVMe or SD card blocking everything
+  iowait_warn: 10              # 10% of CPU time waiting on I/O
+  iowait_alert: 25             # 25% — severe I/O bottleneck
+  iowait_critical: 50          # 50% — I/O is freezing the system
+  # D-state processes (uninterruptible sleep) — stuck waiting on kernel I/O
+  d_state_warn: 3              # a few processes stuck in D state
+  d_state_alert: 10            # many — likely I/O hang
+  d_state_critical: 20         # system-wide I/O stall
+  # Zombie processes — leaked children, can exhaust PID space
+  zombie_warn: 10
+  zombie_alert: 50
+  zombie_critical: 200
+  # GPU memory — if too high, can cause display freezes
+  gpu_mem_warn_mb: 128
+  gpu_mem_alert_mb: 256
+  # Process count — runaway fork bombs or leaks
+  proc_count_warn: 400
+  proc_count_alert: 800
+  # Open file descriptors (system-wide) — fd leaks can cause "too many open files"
+  fd_count_warn: 50000
+  fd_count_alert: 100000
+  # Filesystem inode usage
+  inode_warn_pct: 85
+  inode_alert_pct: 95
+  # PMIC firmware errors — 1-5 per boot is normal Pi 5 behavior with updated EEPROM
+  # Alert only on accumulation (storm): old firmware had 1261/6min
+  pmic_warn: 10
+  pmic_alert: 100
 
-# Health monitor runtime state
+# Health monitor runtime state — ALL FILES ON NVMe (SURVIVE POWER LOSS)
+# /var/tmp is on /dev/nvme0n1p2 (ext4, NOT tmpfs) — confirmed 2026-08-01
+# This means: heartbeat, health state, crash logs, pending reports ALL persist across unplugs.
 health_state_file: /var/tmp/pi-health-state.json
 health_pending_reports: /var/tmp/pi-health-pending-reports.txt
+
+# Data survivability — everything that survives a power cut
+survivability:
+  journal: persistent  # /var/log/journal on NVMe, survives unplug
+  state_files: /var/tmp on NVMe (NOT tmpfs) — all monitoring data persists
+  freeze_evidence:
+    - /var/tmp/pi-freeze-heartbeat.txt     # survives unplug
+    - /var/tmp/pi-freeze-pre-dump.txt      # pre-freeze snapshot survives unplug
+    - /var/tmp/pi-freeze-history.log       # detection history survives
+    - /var/tmp/pi-last-forensics.txt       # forensic report survives
+  crash_evidence:
+    - /var/tmp/hermes-crash.log            # survives unplug
+    - /var/tmp/hermes-crash-count.txt      # survives unplug
+  filesystem_protection:
+    - errors=remount-ro                    # prevents cascade corruption
+    - commit=5                             # faster journal flush (less data loss window)
+    - fsck.mode=force                      # forced fsck on every boot
+    - fsck.repair=yes                      # auto-repair on boot
+    - tune2fs -c 5                         # force fsck every 5 mounts
 
 # Freeze Detection
 # Hard freezes (no kernel panic, no logs) detected via filesystem heartbeat

@@ -13,14 +13,15 @@ Your Pi runs itself. This system handles:
 | Capability | How |
 |---|---|
 | 🔄 **Auto-reboot on freeze** | Hardware watchdog (systemd) + kernel panic handler |
-| 🔍 **Crash forensics** | Post-reboot agent diagnoses cause, restores services |
-| 🩺 **Continuous monitoring** | Temperature, network, disk, RAM, NVMe SMART, Hermes Gateway — every 10 min |
-| ❄️ **Freeze detection** | Filesystem heartbeat (every 1 min) detects silent hard freezes. Pre-freeze snapshots capture dmesg/process/memory state. Forensics report on next boot. |
-| 🌐 **Network outage recovery** | Auto-reconnect, cached reports, flush on restore |
-| 📲 **Telegram alerts** | State transitions only — no spam |
-| 📦 **Config backups** | Automatic hourly snapshots + SHA256 integrity |
+| ❄️ **Hard freeze detection** | Filesystem heartbeat (every 1 min) captures 16 pre-freeze metrics. Stale heartbeat on boot = hard freeze detected |
+| 🔍 **Crash forensics** | Post-reboot agent diagnoses cause, restores services, includes pre-freeze snapshot |
+| 🩺 **Full-stack monitoring** | 20 metrics every 10 min: temp, network, disk, inodes, RAM, swap, load, I/O wait, D-state, zombies, procs, FDs, GPU mem, PMIC errors, throttling, services, NVMe SMART, file integrity, gateway health |
+| 💾 **Data survivability** | All state/heartbeat/crash logs on NVMe ext4 — survive power loss. Persistent journal (20+ boots preserved) |
+| 🌐 **Network outage recovery** | Auto-reconnect ladder, cached reports, flush on restore |
+| 📲 **Telegram alerts** | State transitions only — no spam. 20 alert types |
+| 📦 **Config backups** | Hourly snapshots + SHA256 integrity manifest |
 | ☕ **Daily briefing** | Weather + news every morning at 8am |
-| 🧠 **Hermes self-healing** | Auto-restart gateway on crash via systemd. Crash detection + reporting. |
+| 🧠 **Hermes self-healing** | Auto-restart gateway on crash via systemd. Crash loop detection with rate-limited reboots |
 
 ## Architecture
 
@@ -29,25 +30,35 @@ Your Pi runs itself. This system handles:
 │                    PI AUTOPILOT                          │
 │                                                         │
 │  🔄 POST-REBOOT DEBUG (systemd, every boot)              │
-│  ├── Diagnose crash cause (OOM/thermal/panic)            │
+│  ├── Diagnose crash cause (OOM/thermal/panic/freeze)     │
+│  ├── Check freeze heartbeat staleness                    │
+│  ├── Run forensics if hard freeze detected               │
 │  ├── Restore critical services                           │
 │  └── Telegram report (or cache if offline)               │
 │                                                         │
-│  ❄️ FREEZE DETECTION (cron, every 1 min)                   │
-│  ├── Filesystem heartbeat → /var/tmp/pi-freeze-heartbeat   │
-│  ├── Pre-freeze snapshot every 2 min (dmesg, ps, mem)      │
-│  ├── D-state process tracking (uninterruptible sleep)       │
-│  ├── On boot: check heartbeat staleness → hard freeze?     │
-│  ├── Auto-run forensics if freeze detected                 │
-│  └── Forensics report → /var/tmp/pi-last-forensics.txt     │
+│  ❄️ FREEZE WATCHDOG (cron, every 1 min, no-agent)        │
+│  ├── Heartbeat: 16 metrics to /var/tmp (NVMe)            │
+│  ├── Pre-freeze snapshot every 2 min (full diagnostics)  │
+│  ├── D-state, zombies, swap, load, PMIC, throttled       │
+│  ├── On boot: stale heartbeat > 120s = hard freeze       │
+│  └── Forensics report → /var/tmp/pi-last-forensics.txt   │
 │                                                         │
 │  🩺 HEALTH MONITOR (cron, every 10 min)                  │
+│  ├── 20 metrics with individual thresholds               │
 │  ├── Temperature (75→80→85°C escalation)                 │
+│  ├── Swap (512→1024→1800 MB — OOM early warning)         │
+│  ├── Load avg (3.0→4.5→8.0 — CPU pressure)               │
+│  ├── I/O wait (10→25→50% — NVMe stall detection)         │
+│  ├── D-state procs (3→10→20 — I/O hang signature)        │
+│  ├── Zombies (10→50 — PID exhaustion)                    │
+│  ├── FDs (50k→100k — fd leak)                            │
+│  ├── GPU mem (128→256 MB — display freeze)               │
+│  ├── PMIC errors (10→100 — silent freeze cause #1)       │
 │  ├── Network (down→reconnect→up→report)                  │
-│  ├── Disk / RAM thresholds                               │
+│  ├── Disk / Inodes / RAM thresholds                      │
 │  ├── NVMe SMART (spare, media_errors, unsafe_shutdowns)  │
 │  ├── File integrity (SHA256 vs backup manifest)          │
-│  ├── **Hermes Gateway** (crash detection, restart count)  │
+│  ├── Hermes Gateway (crash detection, restart count)     │
 │  ├── Auto-backup (hourly snapshots)                      │
 │  ├── Reports pending + flush on network restore          │
 │                                                         │
@@ -55,7 +66,8 @@ Your Pi runs itself. This system handles:
 │  ├── hermes-gateway.service (Restart=always, 5s delay)   │
 │  ├── Crash handler logs death, tracks count              │
 │  ├── Crash loop detection (>5 in 10 min = REBOOT Pi)    │
-│  ├── Sends Telegram alert before rebooting               │
+│  ├── Reboot rate limit: 3 per 30 min                     │
+│  └── Sends Telegram alert before rebooting               │
 │                                                         │
 │  ⚡ HARDWARE WATCHDOG (systemd, 60s timeout)              │
 │  └── Kernel panic → reboot in 10s                        │
@@ -89,55 +101,62 @@ pi-autopilot/
 ├── docs/
 │   ├── architecture.md        # Full system design
 │   ├── setup.md               # Step-by-step setup
-│   ├── monitoring.md          # Health checks reference
+│   ├── monitoring.md          # All 20 metrics + thresholds + alerts
 │   └── troubleshooting.md     # Known issues & solutions
 ├── scripts/
-│   ├── install.sh             # One-shot installer
-│   ├── reboot                 # Safe reboot with pre-flight checks
-│   ├── pi-freeze-watchdog.sh    # Freeze heartbeat + detection\n│   ├── pi-freeze-forensics.sh   # Comprehensive freeze diagnostics\n│   ├── pi-reboot-check.sh     # Post-reboot diagnostics runner
-│   ├── hermes-crash-handler.sh # Crash detection + logging
+│   ├── install.sh              # One-shot installer
+│   ├── reboot                  # Safe reboot with pre-flight checks
+│   ├── pi-freeze-watchdog.sh   # Freeze heartbeat + detection (16 metrics/min)
+│   ├── pi-freeze-forensics.sh  # Comprehensive freeze diagnostics
+│   ├── pi-health-snapshot.sh   # On-demand full health dump (20 sections)
+│   ├── pi-reboot-check.sh      # Post-reboot diagnostics runner
+│   ├── hermes-crash-handler.sh # Crash detection + logging + reboot escalation
 │   └── backup-critical-files.sh
-├── skills/                    # Hermes Agent skills
+├── skills/                     # Hermes Agent skills
 │   ├── pi-reboot-debug.md
 │   ├── pi-health-monitor.md
-│   └── pi-auto-reboot.md
+│   ├── pi-auto-reboot.md
+│   └── pi-autopilot.md         # Umbrella skill
 ├── config/
-│   ├── pi-state.yaml          # System state template
-│   ├── journald/override.conf # Persistent journal
+│   ├── pi-state.yaml           # Master config (all thresholds, services)
+│   ├── journald/override.conf  # Persistent journal
 │   └── networkmanager/wifi-powersave-off.conf
 ├── systemd/
-│   ├── hermes-gateway.service     # Hermes gateway with Restart=always
+│   ├── hermes-gateway.service      # Hermes gateway with Restart=always
 │   └── hermes-reboot-debug.service
 └── hermes/
-    ├── cron-jobs.md           # Cron job definitions
-    └── setup-commands.md      # Hermes CLI setup commands
+    ├── cron-jobs.md            # Cron job definitions (3 jobs)
+    └── setup-commands.md       # Hermes CLI setup commands
 ```
 
 ## Key Design Decisions
 
+### 20 metrics, not 6
+The health monitor now tracks swap, load average, I/O wait, D-state processes, zombies, process count, file descriptors, GPU memory, PMIC firmware errors, and inode usage — in addition to temperature, network, disk, RAM, NVMe SMART, file integrity, and services. Rising swap usage is the #1 OOM early warning; high I/O wait with D-state processes is the signature of a failing NVMe; PMIC errors are the #1 silent-freeze cause.
+
+### Freeze heartbeat captures everything
+The freeze watchdog writes 16 metrics every 60 seconds — uptime, load, temp, RAM, swap, D-state, zombies, procs, FDs, PMIC errors, throttled flags, and the last kernel message. Every 2 minutes it dumps a full diagnostic snapshot. All on NVMe ext4 — nothing is lost on power cut.
+
+### All data survives power loss
+`/var/tmp` is on the NVMe ext4 partition (NOT tmpfs). Freeze heartbeat, health state, crash logs, pending reports — everything survives unplugs. Filesystem has `errors=remount-ro`, `commit=5`, `fsck.mode=force`, `fsck.repair=yes`, and `tune2fs -c 5`.
+
 ### Why systemd manages Hermes (not bare process)
-When Hermes gateway runs as a bare `hermes gateway run` process and crashes, it stays dead until someone notices. systemd's `Restart=always` restarts it within 5 seconds. The crash handler logs every death to `/var/tmp/hermes-crash.log` and tracks crash counts in a 10-minute sliding window. **If Hermes crashes 5+ times in 10 minutes, the crash handler automatically reboots the Pi** and sends a Telegram alert before the reboot. This prevents infinite crash loops from silently degrading the system.
+When Hermes gateway runs as a bare `hermes gateway run` process and crashes, it stays dead until someone notices. systemd's `Restart=always` restarts it within 5 seconds. The crash handler logs every death and tracks crash counts. **If Hermes crashes 5+ times in 10 minutes, the crash handler auto-reboots the Pi** (rate-limited to 3 reboots per 30 min).
 
 ### Why WiFi Power Save is OFF
-The Broadcom BCM4345/6 driver's power saving mode causes SDIO bus hangs on Pi 5, leading to full system freezes. Disabled permanently via NetworkManager config.
+Broadcom BCM4345/6 power saving causes SDIO bus hangs on Pi 5, leading to full system freezes. Disabled permanently.
 
 ### Why cgroup memory is disabled
-Pi 5 with kernel 6.x has known instability with the cgroup memory controller. `cgroup_disable=memory` is intentional — Docker works fine without it (loses `--memory` limits but gains stability).
+Pi 5 with kernel 6.x has known instability with the cgroup memory controller. `cgroup_disable=memory` is intentional.
 
 ### Why journal is persistent
-Raspberry Pi OS defaults to volatile journal (`Storage=volatile`) to reduce flash wear. We override this because crash forensics require surviving logs. On NVMe SSD (~500 TBW), the write overhead is negligible.
-
-### Why NVMe SMART monitoring
-The PNY CS1030 NVMe is healthy (100% spare, 4% used), but `unsafe_shutdowns` (59/86 = 68.6%) indicates frequent hard freezes requiring power cycles. We track `available_spare` and `media_errors` to catch degradation before data loss.
+Raspberry Pi OS defaults to volatile journal. We override because crash forensics require surviving logs. On NVMe SSD, write overhead is negligible.
 
 ### Why NVMe ASPM is DISABLED
-Pi 5 PCIe controller doesn't reliably handle NVMe Autonomous Power State Transitions (ASPM). Added `pcie_aspm=off nvme_core.default_ps_max_latency_us=0` to kernel cmdline to prevent PCIe bus hangs that cause silent freezes.
+Pi 5 PCIe controller doesn't reliably handle NVMe power state transitions. `pcie_aspm=off nvme_core.default_ps_max_latency_us=0` in kernel cmdline prevents PCIe bus hangs.
 
-### Why brcmfmac firmware matters
-The Broadcom BCM4345/6 on-chip WiFi firmware (Aug 2023) can't be fully updated — it's burned into ROM. The Linux `firmware-brcm80211` package (updated to 2026-05-19) provides the latest driver-side firmware. Combined with power_save=off and ASPM disable, this covers all known Pi 5 freeze vectors.
-
-### Freeze Detection Design
-Hard freezes (no kernel panic, no logs, no SSH) are the hardest to diagnose. The freeze watchdog writes a timestamp to `/var/tmp/pi-freeze-heartbeat.txt` every minute. On boot, `pi-reboot-check.sh` checks if the heartbeat is stale (>120s). If a hard freeze is detected, `pi-freeze-forensics.sh` collects a comprehensive report including the pre-freeze snapshot (dmesg tail, D-state processes, memory/network state captured every 2 min before the freeze).
+### Why PMIC errors are tracked
+Old bootloader EEPROM causes PMIC communication error storms (1261 errors/6min) → silent freezes. 1-5 per boot is normal with updated EEPROM; >10 accumulating = alert; >100 = storm, update immediately.
 
 ## License
 

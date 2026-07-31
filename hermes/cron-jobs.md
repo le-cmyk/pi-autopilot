@@ -1,5 +1,24 @@
 # Hermes Cron Jobs
 
+## Freeze Heartbeat — every 1 minute
+
+**Schedule**: `every 1m`
+**Script**: `pi-freeze-watchdog.sh heartbeat`
+**Deliver**: `local` (no delivery, writes to /var/tmp)
+**Mode**: `no-agent` (script runs directly, no LLM)
+
+This is the fastest defense against silent hard freezes. Writes a heartbeat timestamp + 15 key metrics every 60 seconds to `/var/tmp/pi-freeze-heartbeat.txt`. On next boot, `pi-reboot-debug` detects stale heartbeat (>120s) and runs full forensics.
+
+```
+hermes cron create "every 1m" \
+  --name "Pi Freeze Heartbeat" \
+  --script /home/pi/.hermes/scripts/pi-freeze-watchdog.sh \
+  --deliver local \
+  --no-agent
+```
+
+---
+
 ## Health Monitor — every 10 minutes
 
 **Schedule**: `*/10 * * * *`
@@ -8,22 +27,23 @@
 
 **Prompt**:
 ```
-Tu es le moniteur de santé du Raspberry Pi 5. Exécute la procédure du skill pi-health-monitor :
+You are the Pi 5 health monitor. Run the pi-health-monitor skill procedure:
 
-1. Lis /home/pi/.hermes/pi-state.yaml
-2. Lis ou crée /var/tmp/pi-health-state.json
-3. Vérifie : température (vcgencmd), réseau (ping 8.8.8.8), disque (df -h /), RAM (free -m), services critiques (systemctl)
-4. Toutes les ~30 min : vérifie NVMe SMART (sudo nvme smart-log) — critical_warning, media_errors, available_spare, unsafe_shutdowns
-5. Toutes les ~30 min : vérifie l'intégrité des fichiers critiques (sha256sum vs backup manifest) + lance backup-critical-files.sh
-6. Compare avec l'état précédent pour détecter les TRANSITIONS (ok→problème, problème→ok)
-7. Si température >= 80°C : alerte Telegram. Si >= 85°C : alerte urgente.
-8. Si réseau passe de UP à DOWN : note l'heure, tente recovery. Si passe de DOWN à UP : rapport de récupération + flush pending reports.
-9. Si disque > 90% ou RAM < 200MB : alerte.
-10. Si NVMe media_errors > 0, spare < 10%, ou critical_warning != 0 : alerte urgente.
-11. Si fichier critique modifié ou disparu : alerte + restaure depuis backup si nécessaire.
-12. Mets à jour /var/tmp/pi-health-state.json.
-13. Règle d'or : NE PAS spammer. Envoyer SEULEMENT sur transition d'état. Max 1 alerte par 15 min par type.
-14. Si réseau down : stocke rapports dans /var/tmp/pi-health-pending-reports.txt.
+1. Read /home/pi/.hermes/pi-state.yaml and /var/tmp/pi-health-state.json
+2. Check ALL 20 metrics: temperature, network, disk, inodes, RAM, swap, load avg, I/O wait, D-state, zombies, process count, file descriptors, GPU memory, PMIC errors, throttling, critical services, NVMe SMART, file integrity, Hermes gateway health
+3. Every ~30 min: NVMe SMART + file integrity + run backup-critical-files.sh
+4. Compare with previous state — detect TRANSITIONS only (ok->problem, problem->ok)
+5. Apply thresholds from pi-state.yaml for each metric
+6. Send Telegram alerts on state transitions only. Max 1 alert per 15 min per type.
+7. If network down: queue reports to /var/tmp/pi-health-pending-reports.txt
+8. Update /var/tmp/pi-health-state.json
+```
+
+```
+hermes cron create "*/10 * * * *" \
+  --name "Pi Health Monitor (10min)" \
+  --skill pi-health-monitor \
+  --deliver origin
 ```
 
 ---
@@ -35,14 +55,20 @@ Tu es le moniteur de santé du Raspberry Pi 5. Exécute la procédure du skill p
 
 **Prompt**:
 ```
-Tu es un assistant qui prépare un briefing matinal quotidien. Tu dois livrer un résumé concis, structuré et agréable à lire, envoyé sur Telegram.
+You are an assistant preparing a daily morning briefing. Deliver a concise, structured summary for Telegram:
 
-1. Météo du jour à Paris — température min/max, conditions, conseil vestimentaire
-2. Titres du jour — 4 à 6 titres importants, mix France et international
-3. À savoir aujourd'hui — jour férié, événement notable (optionnel)
+1. Today's weather in Paris — min/max temp, conditions, clothing recommendation
+2. Top headlines — 4-6 important stories, mix France and international
+3. Today's note — public holiday, notable event (optional)
 
-Format : Markdown concis (< 1500 caractères), ton neutre mais chaleureux.
-Termine par "_Bonne journée !_ ☕"
+Format: concise Markdown (< 1500 chars), neutral but warm tone.
+End with "_Bonne journee !_ ☕"
+```
+
+```
+hermes cron create "0 8 * * *" \
+  --name "Briefing matinal 8h" \
+  --deliver origin
 ```
 
 ---
@@ -50,9 +76,16 @@ Termine par "_Bonne journée !_ ☕"
 ## Hermes CLI Commands
 
 ```bash
+# Create freeze heartbeat
+hermes cron create "every 1m" \
+  --name "Pi Freeze Heartbeat" \
+  --script /home/pi/.hermes/scripts/pi-freeze-watchdog.sh \
+  --deliver local \
+  --no-agent
+
 # Create health monitor
 hermes cron create "*/10 * * * *" \
-  --name "Pi Health Monitor" \
+  --name "Pi Health Monitor (10min)" \
   --skill pi-health-monitor \
   --deliver origin
 
