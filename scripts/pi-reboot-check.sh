@@ -42,6 +42,26 @@ if [ -f "$PENDING_REPORTS" ] && [ -s "$PENDING_REPORTS" ]; then
     log "Found $PENDING_COUNT pending report(s) from before crash"
 fi
 
+# ─── FREEZE DETECTION CHECK ────────────────────────────────────
+FREEZE_WATCHDOG="/home/pi/.hermes/scripts/pi-freeze-watchdog.sh"
+if [ -x "$FREEZE_WATCHDOG" ]; then
+    log "Running freeze watchdog check..."
+    FREEZE_RESULT=$(bash "$FREEZE_WATCHDOG" check 2>&1) || true
+    log "Freeze check: $FREEZE_RESULT"
+
+    # If hard freeze detected, run full forensics
+    if echo "$FREEZE_RESULT" | grep -q "hard_freeze"; then
+        log "HARD FREEZE DETECTED — running forensics..."
+        FORENSICS_SCRIPT="/home/pi/.hermes/scripts/pi-freeze-forensics.sh"
+        if [ -x "$FORENSICS_SCRIPT" ]; then
+            bash "$FORENSICS_SCRIPT" 2>&1 | systemd-cat -t "$LOG_TAG" -p info || true
+            log "Forensics saved to /var/tmp/pi-last-forensics.txt"
+        fi
+    fi
+else
+    log "Freeze watchdog not found — skipping freeze check"
+fi
+
 # Verify state file exists
 if [ ! -f "$STATE_FILE" ]; then
     log "WARNING: State file not found at $STATE_FILE"

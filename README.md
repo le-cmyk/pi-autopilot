@@ -15,6 +15,7 @@ Your Pi runs itself. This system handles:
 | 🔄 **Auto-reboot on freeze** | Hardware watchdog (systemd) + kernel panic handler |
 | 🔍 **Crash forensics** | Post-reboot agent diagnoses cause, restores services |
 | 🩺 **Continuous monitoring** | Temperature, network, disk, RAM, NVMe SMART, Hermes Gateway — every 10 min |
+| ❄️ **Freeze detection** | Filesystem heartbeat (every 1 min) detects silent hard freezes. Pre-freeze snapshots capture dmesg/process/memory state. Forensics report on next boot. |
 | 🌐 **Network outage recovery** | Auto-reconnect, cached reports, flush on restore |
 | 📲 **Telegram alerts** | State transitions only — no spam |
 | 📦 **Config backups** | Automatic hourly snapshots + SHA256 integrity |
@@ -31,6 +32,14 @@ Your Pi runs itself. This system handles:
 │  ├── Diagnose crash cause (OOM/thermal/panic)            │
 │  ├── Restore critical services                           │
 │  └── Telegram report (or cache if offline)               │
+│                                                         │
+│  ❄️ FREEZE DETECTION (cron, every 1 min)                   │
+│  ├── Filesystem heartbeat → /var/tmp/pi-freeze-heartbeat   │
+│  ├── Pre-freeze snapshot every 2 min (dmesg, ps, mem)      │
+│  ├── D-state process tracking (uninterruptible sleep)       │
+│  ├── On boot: check heartbeat staleness → hard freeze?     │
+│  ├── Auto-run forensics if freeze detected                 │
+│  └── Forensics report → /var/tmp/pi-last-forensics.txt     │
 │                                                         │
 │  🩺 HEALTH MONITOR (cron, every 10 min)                  │
 │  ├── Temperature (75→80→85°C escalation)                 │
@@ -85,7 +94,7 @@ pi-autopilot/
 ├── scripts/
 │   ├── install.sh             # One-shot installer
 │   ├── reboot                 # Safe reboot with pre-flight checks
-│   ├── pi-reboot-check.sh     # Post-reboot diagnostics runner
+│   ├── pi-freeze-watchdog.sh    # Freeze heartbeat + detection\n│   ├── pi-freeze-forensics.sh   # Comprehensive freeze diagnostics\n│   ├── pi-reboot-check.sh     # Post-reboot diagnostics runner
 │   ├── hermes-crash-handler.sh # Crash detection + logging
 │   └── backup-critical-files.sh
 ├── skills/                    # Hermes Agent skills
@@ -119,7 +128,16 @@ Pi 5 with kernel 6.x has known instability with the cgroup memory controller. `c
 Raspberry Pi OS defaults to volatile journal (`Storage=volatile`) to reduce flash wear. We override this because crash forensics require surviving logs. On NVMe SSD (~500 TBW), the write overhead is negligible.
 
 ### Why NVMe SMART monitoring
-The PNY CS1030 NVMe is healthy but we track `unsafe_shutdowns` (44/66 = 67%) and `available_spare` to catch degradation before it causes data loss.
+The PNY CS1030 NVMe is healthy (100% spare, 4% used), but `unsafe_shutdowns` (59/86 = 68.6%) indicates frequent hard freezes requiring power cycles. We track `available_spare` and `media_errors` to catch degradation before data loss.
+
+### Why NVMe ASPM is DISABLED
+Pi 5 PCIe controller doesn't reliably handle NVMe Autonomous Power State Transitions (ASPM). Added `pcie_aspm=off nvme_core.default_ps_max_latency_us=0` to kernel cmdline to prevent PCIe bus hangs that cause silent freezes.
+
+### Why brcmfmac firmware matters
+The Broadcom BCM4345/6 on-chip WiFi firmware (Aug 2023) can't be fully updated — it's burned into ROM. The Linux `firmware-brcm80211` package (updated to 2026-05-19) provides the latest driver-side firmware. Combined with power_save=off and ASPM disable, this covers all known Pi 5 freeze vectors.
+
+### Freeze Detection Design
+Hard freezes (no kernel panic, no logs, no SSH) are the hardest to diagnose. The freeze watchdog writes a timestamp to `/var/tmp/pi-freeze-heartbeat.txt` every minute. On boot, `pi-reboot-check.sh` checks if the heartbeat is stale (>120s). If a hard freeze is detected, `pi-freeze-forensics.sh` collects a comprehensive report including the pre-freeze snapshot (dmesg tail, D-state processes, memory/network state captured every 2 min before the freeze).
 
 ## License
 

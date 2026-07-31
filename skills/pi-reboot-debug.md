@@ -53,8 +53,11 @@ Classify the reboot reason — cross-reference with pre-reboot health state:
 - thermal → overheating (check pre-reboot temp_peak)
 - under-voltage → power supply issue
 - kernel panic → driver/kernel bug
+- HARD FREEZE (no kernel panic) → check freeze watchdog heartbeat: `bash /home/pi/.hermes/scripts/pi-freeze-watchdog.sh check`
 - Network watchdog reboot → network was down for extended period
 - No clear cause → unknown (mention this)
+
+**Hard Freeze Detection**: The pi-reboot-check.sh automatically runs `pi-freeze-watchdog.sh check` before launching the Hermes agent. If a stale heartbeat is detected (>120s), it auto-runs `pi-freeze-forensics.sh`. Read `/var/tmp/pi-freeze-heartbeat.txt` and `/var/tmp/pi-last-forensics.txt` for pre-freeze state.
 
 ### Phase 2 — Fix & restore
 
@@ -132,4 +135,6 @@ The pi-health-monitor cron job will detect when network returns and flush pendin
 - Don't spend more than 2 minutes on diagnostics — keep the report short
 - If vcgencmd is unavailable, skip temperature checks gracefully
 - Read pre-reboot health state from `/var/tmp/pi-health-state.json` — this tells you if the crash was preceded by high temp, low memory, or network issues
+- Check freeze watchdog: `bash /home/pi/.hermes/scripts/pi-freeze-watchdog.sh check` — detects silent hard freezes (no kernel panic trace)
+- Read freeze forensics: `cat /var/tmp/pi-last-forensics.txt` — comprehensive pre-freeze snapshot if available
 - Coordinate with pi-health-monitor: it handles ongoing monitoring, you handle the post-reboot one-time diagnosis

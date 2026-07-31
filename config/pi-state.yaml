@@ -16,7 +16,24 @@ storage:
   smart: PASSED
   available_spare: 100%
   percentage_used: 4%
-  unsafe_shutdowns_warning: true  # 44/66 = 67% — very high, monitor closely
+  unsafe_shutdowns_warning: true  # 59/86 = 68.6% — catastrophic, hard freezes
+
+# WiFi — Broadcom BCM4345/6 SDIO
+# CRITICAL: Old firmware (Aug 2023) has known SDIO bus hang bugs → full system freeze
+# Updated to 2026-05-19 via firmware-brcm80211 (apt)
+wifi:
+  chipset: BCM4345/6 (brcmfmac, SDIO)
+  firmware_package: firmware-brcm80211 1:20260519-1~bpo13+1+rpt1
+  firmware_built: Aug 29 2023 (on-chip ROM, not updatable via package)
+  power_save: off  # MUST stay off — primary freeze cause on Pi 5
+  frequency: 5GHz
+  known_issue: "brcmfmac SDIO firmware (on-chip) is old (Aug 2023). Cannot be updated beyond what Broadcom burned into ROM. If SDIO bus hangs persist, try 2.4GHz band or external USB WiFi adapter."
+
+# NVMe ASPM — DISABLED via cmdline to prevent PCIe bus freezes
+# pcie_aspm=off + nvme_core.default_ps_max_latency_us=0
+nvme_aspm:
+  status: disabled  # set via /boot/firmware/cmdline.txt
+  reason: "Pi 5 PCIe controller does not handle NVMe ASPM state transitions reliably"
 
 # Network (WiFi only — eth0 is DOWN)
 network:
@@ -93,26 +110,52 @@ thresholds:
 health_state_file: /var/tmp/pi-health-state.json
 health_pending_reports: /var/tmp/pi-health-pending-reports.txt
 
+# Freeze Detection
+# Hard freezes (no kernel panic, no logs) detected via filesystem heartbeat
+freeze_detection:
+  enabled: true
+  heartbeat_script: /home/pi/.hermes/scripts/pi-freeze-watchdog.sh
+  forensics_script: /home/pi/.hermes/scripts/pi-freeze-forensics.sh
+  cron_job: af11e1e30d9e  # runs every 1 min (pi-freeze-watchdog.sh heartbeat)
+  heartbeat_file: /var/tmp/pi-freeze-heartbeat.txt
+  pre_dump_file: /var/tmp/pi-freeze-pre-dump.txt
+  history_file: /var/tmp/pi-freeze-history.log
+  forensics_output: /var/tmp/pi-last-forensics.txt
+  stale_threshold_sec: 120  # heartbeat older than this = hard freeze
+  check_on_boot: true  # pi-reboot-debug now checks heartbeat staleness
+
 # Known issues & fixes
 known_issues:
   - symptom: "Pi freezes, requires hard power cycle (unplug). Black screen, no SSH."
     likely_causes:
       - "WiFi power save ON (check: iwconfig wlan0 | grep Power)"
+      - "brcmfmac SDIO firmware bug (on-chip firmware Aug 2023 → SDIO bus hang)"
       - "Kernel/driver bug (check: dmesg | tail -50)"
       - "PMIC firmware error storm (check: dmesg | grep -c 'status 0x80000001')"
-      - "NVMe ASPM power management"
+      - "NVMe ASPM power management (DISABLED via cmdline: pcie_aspm=off)"
     checks:
       - "sudo journalctl -p err -b -1 --no-pager | tail -30"
       - "vcgencmd get_throttled"
       - "dmesg | grep -iE 'under-voltage|thermal|nvme'"
+      - "bash /home/pi/.hermes/scripts/pi-freeze-watchdog.sh check  # detects hard freeze"
+      - "bash /home/pi/.hermes/scripts/pi-freeze-forensics.sh  # full forensic report"
     prevention:
       - "WiFi powersave OFF (confirmed)"
+      - "brcmfmac firmware package updated to 2026-05-19 (latest available)"
+      - "NVMe ASPM DISABLED via cmdline (pcie_aspm=off + nvme_core.default_ps_max_latency_us=0)"
+      - "Freeze heartbeat: every 1 min to /var/tmp — detects hard freezes on next boot"
       - "Filesystem: errors=remount-ro prevents cascading corruption"
       - "fstab: commit=5 for faster journal flush"
       - "fsck.mode=force on every boot"
       - "tune2fs -c 5: force fsck every 5 mounts"
       - "Hardware watchdog: 60s timeout (systemd)"
-    recovery: "After hard power cycle, let fsck run. If Hermes fails: restore from ~/.hermes/backups/"
+    recovery: "After hard power cycle, let fsck run. Run freeze forensics: bash /home/pi/.hermes/scripts/pi-freeze-forensics.sh. If Hermes fails: restore from ~/.hermes/backups/"
+
+  - symptom: "Pi freezes with no log trace (silent hard freeze) — detected by stale freeze heartbeat"
+    root_cause: "Likely brcmfmac SDIO firmware hang OR NVMe ASPM hang. Both cause bus-level lockup that prevents kernel from logging."
+    detection: "Freeze watchdog checks heartbeat staleness on boot. Run: bash /home/pi/.hermes/scripts/pi-freeze-watchdog.sh check"
+    forensics: "bash /home/pi/.hermes/scripts/pi-freeze-forensics.sh  # full report with pre-freeze snapshot"
+    escalation: "If freezes persist after ASPM disable + firmware update → try 2.4GHz WiFi band, disable WiFi entirely (use Ethernet), or use external USB WiFi adapter."
 
   - symptom: "Hermes fails to start: OSError [Errno 5] Input/output error on config/pairing files"
     root_cause: "Filesystem corruption from hard power cycles (unplugging Pi). EXT4 journal recovers but some files may be lost."
