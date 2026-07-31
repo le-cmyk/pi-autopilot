@@ -40,6 +40,7 @@ critical_services:
   - cron.service
   - NetworkManager.service
   - systemd-timesyncd.service
+  - hermes-gateway.service
 
 # Important but non-critical
 optional_services:
@@ -52,6 +53,15 @@ hermes:
   version: "0.19.0"
   home: /home/pi/.hermes
   install: /home/pi/.hermes/hermes-agent (git)
+  gateway:
+    managed: systemd  # systemd hermes-gateway.service with Restart=always
+    service: hermes-gateway.service
+    restart_policy: always
+    restart_sec: 5
+    crash_threshold: 5       # alert after this many crashes in window
+    crash_window_sec: 600    # 10 minute crash window
+    crash_log: /var/tmp/hermes-crash.log
+    crash_handler: /home/pi/.hermes/scripts/hermes-crash-handler.sh
   cron_jobs:
     - "5adf1051a9c0: Briefing matinal 8h (0 8 * * *)"
     - "cc2b4da77538: Pi Health Monitor (every 10 min)"
@@ -93,10 +103,12 @@ known_issues:
       - "vcgencmd get_throttled"
       - "dmesg | grep -iE 'under-voltage|thermal'"
 
-  - symptom: "Hermes I/O error on config files (telegram-approved.json)"
-    root_cause: "Unsafe shutdown corrupting filesystem — 44/66 shutdowns were unsafe"
-    prevention: "Backups in /home/pi/.hermes/backups/ — restore with cp *.bak ~/.hermes/"
-    fix: "Gateway auto-recovers on restart. If persistent: restore from backup."
+  - symptom: "Hermes gateway crashes repeatedly ('Sorry, I encountered an unexpected error')"
+    root_cause: "Gateway process died — possible causes: OOM, config corruption, dependency crash, watchdog timeout"
+    prevention: "systemd hermes-gateway.service with Restart=always auto-recovers within 5s"
+    fix: "Check crash log: tail /var/tmp/hermes-crash.log"
+    escalation: "If crash loop detected (>5 crashes in 10 min): systemd stops restarting. Run: sudo systemctl reset-failed hermes-gateway && sudo systemctl start hermes-gateway"
+    monitoring: "pi-health-monitor checks hermes-gateway.service status every 10 min"
 
   - symptom: "Docker containers not starting"
     fix: "sudo systemctl restart docker"

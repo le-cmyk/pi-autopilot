@@ -14,11 +14,12 @@ Your Pi runs itself. This system handles:
 |---|---|
 | 🔄 **Auto-reboot on freeze** | Hardware watchdog (systemd) + kernel panic handler |
 | 🔍 **Crash forensics** | Post-reboot agent diagnoses cause, restores services |
-| 🩺 **Continuous monitoring** | Temperature, network, disk, RAM, NVMe SMART — every 10 min |
+| 🩺 **Continuous monitoring** | Temperature, network, disk, RAM, NVMe SMART, Hermes Gateway — every 10 min |
 | 🌐 **Network outage recovery** | Auto-reconnect, cached reports, flush on restore |
 | 📲 **Telegram alerts** | State transitions only — no spam |
 | 📦 **Config backups** | Automatic hourly snapshots + SHA256 integrity |
 | ☕ **Daily briefing** | Weather + news every morning at 8am |
+| 🧠 **Hermes self-healing** | Auto-restart gateway on crash via systemd. Crash detection + reporting. |
 
 ## Architecture
 
@@ -37,7 +38,15 @@ Your Pi runs itself. This system handles:
 │  ├── Disk / RAM thresholds                               │
 │  ├── NVMe SMART (spare, media_errors, unsafe_shutdowns)  │
 │  ├── File integrity (SHA256 vs backup manifest)          │
-│  └── Auto-backup (hourly snapshots)                      │
+│  ├── **Hermes Gateway** (crash detection, restart count)  │
+│  ├── Auto-backup (hourly snapshots)                      │
+│  ├── Reports pending + flush on network restore          │
+│                                                         │
+│  🧠 HERMES SELF-HEALING (systemd)                        │
+│  ├── hermes-gateway.service (Restart=always, 5s delay)   │
+│  ├── Crash handler logs death, tracks count              │
+│  ├── Crash loop detection (>5 in 10 min = alert)         │
+│  └── Pending reports flushed when Hermes is back online  │
 │                                                         │
 │  ⚡ HARDWARE WATCHDOG (systemd, 60s timeout)              │
 │  └── Kernel panic → reboot in 10s                        │
@@ -76,6 +85,8 @@ pi-autopilot/
 ├── scripts/
 │   ├── install.sh             # One-shot installer
 │   ├── reboot                 # Safe reboot with pre-flight checks
+│   ├── pi-reboot-check.sh     # Post-reboot diagnostics runner
+│   ├── hermes-crash-handler.sh # Crash detection + logging
 │   └── backup-critical-files.sh
 ├── skills/                    # Hermes Agent skills
 │   ├── pi-reboot-debug.md
@@ -86,6 +97,7 @@ pi-autopilot/
 │   ├── journald/override.conf # Persistent journal
 │   └── networkmanager/wifi-powersave-off.conf
 ├── systemd/
+│   ├── hermes-gateway.service     # Hermes gateway with Restart=always
 │   └── hermes-reboot-debug.service
 └── hermes/
     ├── cron-jobs.md           # Cron job definitions
@@ -93,6 +105,9 @@ pi-autopilot/
 ```
 
 ## Key Design Decisions
+
+### Why systemd manages Hermes (not bare process)
+When Hermes gateway runs as a bare `hermes gateway run` process and crashes, it stays dead until someone notices. systemd's `Restart=always` restarts it within 5 seconds. The crash handler logs every death to `/var/tmp/hermes-crash.log` and tracks crash counts. If Hermes crashes more than 5 times in 10 minutes, the health monitor sends an alert (crash loop detected). If it exceeds 10, systemd stops restarting (StartLimitBurst) to prevent disk flooding — manual intervention required.
 
 ### Why WiFi Power Save is OFF
 The Broadcom BCM4345/6 driver's power saving mode causes SDIO bus hangs on Pi 5, leading to full system freezes. Disabled permanently via NetworkManager config.

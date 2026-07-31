@@ -54,6 +54,7 @@ mkdir -p ~/.hermes/scripts ~/.hermes/backups/snapshots
 cp "$REPO_DIR/scripts/reboot" ~/reboot 2>/dev/null || warn "reboot script not found"
 cp "$REPO_DIR/scripts/backup-critical-files.sh" ~/.hermes/scripts/ 2>/dev/null || warn "backup script not found"
 cp "$REPO_DIR/scripts/pi-reboot-check.sh" ~/.hermes/scripts/ 2>/dev/null || warn "pi-reboot-check not found"
+cp "$REPO_DIR/scripts/hermes-crash-handler.sh" ~/.hermes/scripts/ 2>/dev/null || warn "crash-handler not found"
 chmod +x ~/reboot ~/.hermes/scripts/*.sh 2>/dev/null || true
 
 # --- Deploy skills ---
@@ -81,13 +82,18 @@ else
     log "State file already exists (preserved)"
 fi
 
-# --- Deploy systemd service ---
-log "Deploying systemd service..."
+# --- Deploy systemd services ---
+log "Deploying systemd services..."
 if [ -f "$REPO_DIR/systemd/hermes-reboot-debug.service" ]; then
     sudo cp "$REPO_DIR/systemd/hermes-reboot-debug.service" /etc/systemd/system/
-    sudo systemctl daemon-reload
-    sudo systemctl enable hermes-reboot-debug 2>/dev/null || warn "Could not enable service"
+    sudo systemctl enable hermes-reboot-debug 2>/dev/null || warn "Could not enable reboot-debug"
     log "  hermes-reboot-debug.service enabled"
+fi
+if [ -f "$REPO_DIR/systemd/hermes-gateway.service" ]; then
+    sudo cp "$REPO_DIR/systemd/hermes-gateway.service" /etc/systemd/system/
+    sudo systemctl daemon-reload
+    sudo systemctl enable hermes-gateway 2>/dev/null || warn "Could not enable hermes-gateway"
+    log "  hermes-gateway.service enabled (auto-restart on crash)"
 fi
 
 # --- Initial backup ---

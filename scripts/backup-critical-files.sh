@@ -17,7 +17,10 @@ CRITICAL_FILES=(
     "/home/pi/.hermes/pi-state.yaml"
     "/home/pi/.hermes/skills/smart-home/pi-health-monitor/SKILL.md"
     "/home/pi/.hermes/skills/smart-home/pi-reboot-debug/SKILL.md"
+    "/home/pi/.hermes/skills/smart-home/pi-autopilot/SKILL.md"
     "/home/pi/.hermes/scripts/pi-reboot-check.sh"
+    "/home/pi/.hermes/scripts/hermes-crash-handler.sh"
+    "/etc/systemd/system/hermes-gateway.service"
 )
 
 mkdir -p "$BACKUP_DIR"

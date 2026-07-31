@@ -1,0 +1,30 @@
+[Unit]
+Description=Hermes Agent Gateway
+Documentation=https://hermes-agent.nousresearch.com
+After=network-online.target docker.service
+Wants=network-online.target docker.service
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi
+Environment=HOME=/home/pi
+Environment=HERMES_HOME=/home/pi/.hermes
+Environment=PATH=/home/pi/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/pi/.local/bin/hermes gateway run
+ExecStartPre=/bin/bash -c 'echo "HERMES_GATEWAY_START $(date -Is)" >> /var/tmp/hermes-crash.log'
+ExecStopPost=/bin/bash -c 'EXIT_CODE=%p; echo "HERMES_GATEWAY_EXIT code=$EXIT_CODE at $(date -Is)" >> /var/tmp/hermes-crash.log; /home/pi/.hermes/scripts/hermes-crash-handler.sh'
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hermes-gateway
+# Prevent restart loops from filling disk
+TimeoutStartSec=60
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
