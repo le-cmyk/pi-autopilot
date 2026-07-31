@@ -14,9 +14,9 @@ WorkingDirectory=/home/pi
 Environment=HOME=/home/pi
 Environment=HERMES_HOME=/home/pi/.hermes
 Environment=PATH=/home/pi/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=/home/pi/.local/bin/hermes gateway run
+ExecStart=/home/pi/.local/bin/hermes gateway run --replace
 ExecStartPre=/bin/bash -c 'echo "HERMES_GATEWAY_START $(date -Is)" >> /var/tmp/hermes-crash.log'
-ExecStopPost=/bin/bash -c 'EXIT_CODE=%p; echo "HERMES_GATEWAY_EXIT code=$EXIT_CODE at $(date -Is)" >> /var/tmp/hermes-crash.log; /home/pi/.hermes/scripts/hermes-crash-handler.sh'
+ExecStopPost=/bin/bash -c 'EXIT_CODE=${EXIT_CODE:-unknown}; echo "HERMES_GATEWAY_EXIT code=$EXIT_CODE at $(date -Is)" >> /var/tmp/hermes-crash.log; /home/pi/.hermes/scripts/hermes-crash-handler.sh'
 Restart=always
 RestartSec=5
 StandardOutput=journal

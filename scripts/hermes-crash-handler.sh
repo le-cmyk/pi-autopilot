@@ -14,8 +14,24 @@ CRASH_WINDOW_SECONDS=600   # 10 minute window
 
 TIMESTAMP=$(date -Is)
 
-# Read exit code from the log (written by ExecStopPost)
-EXIT_CODE=$(tail -1 "$CRASH_LOG" 2>/dev/null | grep -oP 'code=\K[0-9]+' || echo "unknown")
+# Read exit code from systemd (set in ExecStopPost via $EXIT_CODE)
+# Exit codes:
+#   0       = normal exit (service stopped)
+#   143     = SIGTERM (killed by systemd stop or --replace takeover)
+#   1       = application error
+#   137     = SIGKILL
+#   unknown = couldn't determine
+EXIT_CODE="${EXIT_CODE:-unknown}"
+
+# Skip counting for normal exits (0 = clean stop, 143 = SIGTERM from --replace or systemd stop)
+if [ "$EXIT_CODE" = "0" ]; then
+    echo "[$TIMESTAMP] Hermes gateway stopped normally (exit=0) — not a crash" >> "$CRASH_LOG"
+    exit 0
+fi
+if [ "$EXIT_CODE" = "143" ]; then
+    echo "[$TIMESTAMP] Hermes gateway killed by SIGTERM (exit=143) — likely --replace takeover or service stop" >> "$CRASH_LOG"
+    exit 0
+fi
 
 # Increment crash counter
 mkdir -p "$(dirname "$CRASH_COUNT_FILE")"
