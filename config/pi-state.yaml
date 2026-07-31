@@ -105,11 +105,11 @@ known_issues:
       - "vcgencmd get_throttled"
       - "dmesg | grep -iE 'under-voltage|thermal'"
 
-  - symptom: "Hermes gateway crashes repeatedly ('Sorry, I encountered an unexpected error')"
-    root_cause: "Gateway process died — possible causes: OOM, config corruption, dependency crash, watchdog timeout"
-    prevention: "systemd hermes-gateway.service with Restart=always auto-recovers within 5s"
-    escalation: "If 5+ crashes in 10 min: crash handler AUTO-REBOOTS the Pi + sends Telegram alert"
-    monitoring: "pi-health-monitor checks hermes-gateway.service status every 10 min"
+  - symptom: "Hermes fails to start: OSError [Errno 5] Input/output error on config/pairing files"
+    root_cause: "Filesystem corruption from hard power cycles (unplugging Pi). EXT4 journal recovers but some files may be lost."
+    prevention: "Never unplug the Pi. Use ~/reboot for clean reboots. Backup snapshots every 30 min."
+    fix: "Restore from latest backup: cp ~/.hermes/backups/<file>.bak ~/.hermes/<path>. If file is telegram-approved.json, Hermes will auto-regenerate on next gateway start."
+    escalation: "If multiple files corrupted: restore from snapshot: tar xzf ~/.hermes/backups/snapshots/hermes-backup-*.tar.gz -C ~/.hermes/"
 
   - symptom: "Docker containers not starting"
     fix: "sudo systemctl restart docker"

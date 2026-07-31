@@ -15,6 +15,7 @@ CRITICAL_FILES=(
     "/home/pi/.hermes/auth.json"
     "/home/pi/.hermes/.env"
     "/home/pi/.hermes/pi-state.yaml"
+    "/home/pi/.hermes/platforms/pairing/telegram-approved.json"
     "/home/pi/.hermes/skills/smart-home/pi-health-monitor/SKILL.md"
     "/home/pi/.hermes/skills/smart-home/pi-reboot-debug/SKILL.md"
     "/home/pi/.hermes/skills/smart-home/pi-autopilot/SKILL.md"
