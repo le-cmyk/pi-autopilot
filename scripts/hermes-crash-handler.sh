@@ -7,10 +7,13 @@ set -euo pipefail
 
 CRASH_LOG="/var/tmp/hermes-crash.log"
 CRASH_COUNT_FILE="/var/tmp/hermes-crash-count.txt"
+REBOOT_COUNT_FILE="/var/tmp/hermes-reboot-count.txt"
 HEALTH_STATE="/var/tmp/pi-health-state.json"
 PENDING_REPORTS="/var/tmp/pi-health-pending-reports.txt"
-CRASH_THRESHOLD=5          # Reboot + alert after this many crashes in WINDOW
-CRASH_WINDOW_SECONDS=600   # 10 minute window
+CRASH_THRESHOLD=5          # Reboot + alert after this many crashes in CRASH_WINDOW
+CRASH_WINDOW_SECONDS=600   # 10 minute crash window
+MAX_REBOOTS=3              # Max reboots in REBOOT_WINDOW before falling back to alert-only
+REBOOT_WINDOW_SECONDS=1800 # 30 minute reboot window
 
 TIMESTAMP=$(date -Is)
 
@@ -84,28 +87,65 @@ CRASH_REPORT="⚠️ *Hermes Gateway crashed*
 
 echo "$CRASH_REPORT" >> "$PENDING_REPORTS"
 
-# Crash loop detected → REBOOT the Pi
+# Crash loop detected → REBOOT the Pi (with rate limit)
 if [ "$COUNT" -ge "$CRASH_THRESHOLD" ]; then
-    REBOOT_MSG="🚨 *CRITICAL: Hermes crash loop detected — rebooting Pi*
+
+    # --- Reboot rate limit: max MAX_REBOOTS in REBOOT_WINDOW ---
+    if [ -f "$REBOOT_COUNT_FILE" ]; then
+        read -r REBOOT_COUNT REBOOT_WINDOW_START < "$REBOOT_COUNT_FILE" 2>/dev/null || { REBOOT_COUNT=0; REBOOT_WINDOW_START=$NOW; }
+    else
+        REBOOT_COUNT=0
+        REBOOT_WINDOW_START=$NOW
+    fi
+
+    REBOOT_WINDOW_AGE=$((NOW - REBOOT_WINDOW_START))
+    if [ "$REBOOT_WINDOW_AGE" -gt "$REBOOT_WINDOW_SECONDS" ]; then
+        REBOOT_COUNT=0
+        REBOOT_WINDOW_START=$NOW
+    fi
+
+    REBOOT_COUNT=$((REBOOT_COUNT + 1))
+
+    if [ "$REBOOT_COUNT" -gt "$MAX_REBOOTS" ]; then
+        # Rate limit exceeded — alert only, no reboot
+        RATE_LIMIT_MSG="🛑 *Hermes crash loop — reboot rate limit reached*
+• $COUNT crashes in $(($WINDOW_AGE / 60)) min
+• $MAX_REBOOTS reboots already performed in last $(($REBOOT_WINDOW_AGE / 60)) min
+• Skipping reboot to prevent infinite loop
+• Manual intervention required — check: journalctl -u hermes-gateway -n 100"
+
+        echo "$RATE_LIMIT_MSG" >> "$PENDING_REPORTS"
+        echo "[$TIMESTAMP] RATE LIMITED: $REBOOT_COUNT reboots in window, skipping reboot" >> "$CRASH_LOG"
+
+        if command -v hermes &>/dev/null && ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1; then
+            hermes send --to telegram "$RATE_LIMIT_MSG" 2>/dev/null || true
+        fi
+    else
+        # Within rate limit — reboot
+        echo "$REBOOT_COUNT $REBOOT_WINDOW_START" > "$REBOOT_COUNT_FILE"
+
+        REBOOT_MSG="🚨 *CRITICAL: Hermes crash loop detected — rebooting Pi*
 • $COUNT crashes in $(($WINDOW_AGE / 60)) min
 • Last exit code: $EXIT_CODE
+• Reboot #$REBOOT_COUNT/$MAX_REBOOTS in last $(($REBOOT_WINDOW_AGE / 60)) min
 • Time: $TIMESTAMP
 • Rebooting now to recover system stability..."
 
-    echo "$REBOOT_MSG" >> "$PENDING_REPORTS"
-    echo "[$TIMESTAMP] CRITICAL: $COUNT crashes in window — triggering safe reboot" >> "$CRASH_LOG"
+        echo "$REBOOT_MSG" >> "$PENDING_REPORTS"
+        echo "[$TIMESTAMP] CRITICAL: $COUNT crashes in window — triggering safe reboot (#$REBOOT_COUNT)" >> "$CRASH_LOG"
 
-    # Try to send Telegram alert before rebooting
-    if command -v hermes &>/dev/null && ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1; then
-        hermes send --to telegram "$REBOOT_MSG" 2>/dev/null || true
-    fi
+        # Try to send Telegram alert before rebooting
+        if command -v hermes &>/dev/null && ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1; then
+            hermes send --to telegram "$REBOOT_MSG" 2>/dev/null || true
+        fi
 
-    # Use safe reboot script or fallback to direct reboot
-    if [ -f /home/pi/reboot ]; then
-        /home/pi/reboot "hermes crash loop: $COUNT crashes in $(($WINDOW_AGE / 60)) min"
-    else
-        sync
-        sudo reboot
+        # Use safe reboot script or fallback to direct reboot
+        if [ -f /home/pi/reboot ]; then
+            /home/pi/reboot "hermes crash loop: $COUNT crashes in $(($WINDOW_AGE / 60)) min"
+        else
+            sync
+            sudo reboot
+        fi
     fi
 fi
 
