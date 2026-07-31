@@ -95,15 +95,24 @@ health_pending_reports: /var/tmp/pi-health-pending-reports.txt
 
 # Known issues & fixes
 known_issues:
-  - symptom: "Pi freezes randomly, watchdog reboots"
+  - symptom: "Pi freezes, requires hard power cycle (unplug). Black screen, no SSH."
     likely_causes:
-      - "Power supply insufficient (need 5V/5A for Pi 5)"
-      - "Overheating under load"
-      - "Kernel/driver bug"
+      - "WiFi power save ON (check: iwconfig wlan0 | grep Power)"
+      - "Kernel/driver bug (check: dmesg | tail -50)"
+      - "PMIC firmware error storm (check: dmesg | grep -c 'status 0x80000001')"
+      - "NVMe ASPM power management"
     checks:
       - "sudo journalctl -p err -b -1 --no-pager | tail -30"
       - "vcgencmd get_throttled"
-      - "dmesg | grep -iE 'under-voltage|thermal'"
+      - "dmesg | grep -iE 'under-voltage|thermal|nvme'"
+    prevention:
+      - "WiFi powersave OFF (confirmed)"
+      - "Filesystem: errors=remount-ro prevents cascading corruption"
+      - "fstab: commit=5 for faster journal flush"
+      - "fsck.mode=force on every boot"
+      - "tune2fs -c 5: force fsck every 5 mounts"
+      - "Hardware watchdog: 60s timeout (systemd)"
+    recovery: "After hard power cycle, let fsck run. If Hermes fails: restore from ~/.hermes/backups/"
 
   - symptom: "Hermes fails to start: OSError [Errno 5] Input/output error on config/pairing files"
     root_cause: "Filesystem corruption from hard power cycles (unplugging Pi). EXT4 journal recovers but some files may be lost."
