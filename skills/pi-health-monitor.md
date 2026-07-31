@@ -1,13 +1,13 @@
 ---
 name: pi-health-monitor
 description: "Pi5 health: temp, network, disk, RAM. Alert and recover."
-version: 1.0.0
+version: 1.1.0
 platforms: [linux]
 ---
 
 # Pi Health Monitor
 
-Runs every 5 minutes via cron. Checks temperature, network connectivity, disk space, RAM, and critical services. Sends Telegram alerts on problems and recovery reports when issues resolve.
+Runs every 10 minutes via cron. Checks temperature, network connectivity, disk space, RAM, NVMe SMART, file integrity, and critical services. Sends Telegram alerts on state transitions. Queues reports locally when network is down.
 
 ## State files
 
@@ -75,14 +75,14 @@ Thresholds from state file:
 
 ```
 If TEMP >= 85:
-  → Send URGENT Telegram alert: "🌡 Pi à 85°C — THROTTLING ! Éteins les conteneurs lourds."
+  → Send URGENT Telegram alert: "🌡 Pi at 85°C — THROTTLING! Stop heavy containers."
   → Suggest: docker stop <heavy containers>, check ventilation
 If TEMP >= 80 and was previously < 80:
-  → Send Telegram alert: "⚠️ Pi à X°C — surveille la ventilation."
+  → Send Telegram alert: "⚠️ Pi at X°C — check ventilation."
 If TEMP >= 75:
   → Log warning, no Telegram (avoid noise)
 If TEMP drops from >= 80 to < 75:
-  → Send recovery report: "✅ Température redescendue à X°C."
+  → Send recovery report: "✅ Temperature dropped to X°C."
 ```
 
 Track temperature state transitions in runtime state file.
@@ -114,14 +114,14 @@ When network is down, the agent can still do everything locally — just can't s
 
 ```
 If DISK_PCT > 90:
-  → Send alert: "💾 Disque à X% !"
+  → Send alert: "💾 Disk at X%!"
 If DISK_PCT > 95:
-  → Send urgent: "🚨 Disque quasi plein — risque de crash."
+  → Send urgent: "🚨 Disk almost full — crash risk."
 
 If MEM_FREE_MB < 200:
-  → Send alert: "🧠 RAM libre: X MB — vérifie les processus."
+  → Send alert: "🧠 Free RAM: X MB — check processes."
 If MEM_FREE_MB < 100:
-  → Send urgent: "🚨 RAM critique — OOM killer probable."
+  → Send urgent: "🚨 Critical RAM — OOM killer likely."
 ```
 
 ### Step 6 — NVMe SMART monitoring (every 30 min)
@@ -136,14 +136,14 @@ Check against thresholds from state file:
 If critical_warning != 0:
   → URGENT: "🚨 NVMe SMART critical warning! Backup immediately."
 If available_spare < 10%:
-  → Alert: "💾 NVMe spare blocks à X% — le disque s'use."
+  → Alert: "💾 NVMe spare blocks at X% — drive wearing out."
 If media_errors > 0:
-  → URGENT: "🚨 NVMe media errors detected — risque de perte de données."
+  → URGENT: "🚨 NVMe media errors detected — data loss risk."
 If unsafe_shutdowns increased since last check:
-  → Warning: "⚡ Unsafe shutdowns: X → Y. Alimentation instable ?"
+  → Warning: "⚡ Unsafe shutdowns: X → Y. Power unstable?"
   → Update state file with new count
 If percentage_used > 90%:
-  → Alert: "⏳ NVMe endurance à X% — prévoir remplacement."
+  → Alert: "⏳ NVMe endurance at X% — plan replacement."
 ```
 
 ### Step 7 — File integrity check (every 30 min)
@@ -155,10 +155,10 @@ diff /var/tmp/pi-current-sha256.txt /home/pi/.hermes/backups/critical-files.sha2
 
 ```
 If any file hash differs:
-  → Alert: "🔐 Fichier modifié: <filename>. Possible corruption post-crash."
+  → Alert: "🔐 File modified: <filename>. Possible post-crash corruption."
   → Run backup script to capture new state: bash /home/pi/.hermes/scripts/backup-critical-files.sh
 If any file is MISSING:
-  → URGENT: "❌ Fichier critique disparu: <filename>. Restauration depuis backup nécessaire."
+  → URGENT: "❌ Critical file missing: <filename>. Restoring from backup."
   → Restore: cp /home/pi/.hermes/backups/<file>.bak /home/pi/.hermes/<original_path>
 ```
 
@@ -225,7 +225,7 @@ fi
 - Network recovery: try nmcli first, then restart NetworkManager, then reboot WiFi interface as last resort
 - Temperature: the Pi 5 throttles at 85°C — alert before that
 - NVMe SMART: only check every 30 min (expensive), track unsafe_shutdowns trend
-- File integrity: compare sha256 with backup manifest. If file changed but system is OK → it was a legitimate update. If file is MISSING → restore immediately.
-- Backups: run every ~30 min automatically. Check /home/pi/.hermes/backups/ for restores.
+- File integrity: compare sha256 with backup manifest. If file changed but system is OK → it was a legitimate update. If file is MISSING → restore immediately
+- Backups: run every ~30 min automatically. Check /home/pi/.hermes/backups/ for restores
 - If state file is missing, use defaults
 - The agent has access to shell commands via terminal — use them directly

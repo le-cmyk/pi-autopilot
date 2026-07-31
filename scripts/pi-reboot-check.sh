@@ -52,12 +52,12 @@ fi
 # -Q: quiet mode (no spinner, no tool previews)
 log "Launching Hermes agent for diagnostics..."
 DIAG_OUTPUT=$(
-    $HERMES -z "Le Pi vient de redémarrer. Exécute la procédure complète du skill pi-reboot-debug :
-        1. Lis /home/pi/.hermes/pi-state.yaml et /var/tmp/pi-health-state.json
-        2. Détermine la cause du reboot (check logs précédents + contexte santé)
-        3. Vérifie et restaure les services critiques
-        4. Si le réseau est DOWN: cache le rapport dans /var/tmp/pi-health-pending-reports.txt
-        5. Si le réseau est UP: envoie le rapport sur Telegram ET flush les pending reports s'il y en a" \
+    $HERMES -z "The Pi just rebooted. Run the full pi-reboot-debug skill procedure:
+        1. Read /home/pi/.hermes/pi-state.yaml and /var/tmp/pi-health-state.json
+        2. Determine reboot cause (check previous logs + health context)
+        3. Verify and restore critical services
+        4. If network is DOWN: cache report to /var/tmp/pi-health-pending-reports.txt
+        5. If network is UP: send report to Telegram AND flush any pending reports" \
         --skills pi-reboot-debug \
         -Q \
         2>&1

@@ -1,13 +1,13 @@
 ---
 name: pi-reboot-debug
 description: "Pi5 reboot: find crash cause, restore services, report."
-version: 1.0.0
+version: 1.1.0
 platforms: [linux]
 ---
 
 # Pi Reboot Debug
 
-This skill runs automatically after every reboot via `hermes-reboot-debug.service`. It diagnoses why the Pi rebooted, restores critical services, and sends a recap to the user on Telegram.
+Runs automatically after every reboot via `hermes-reboot-debug.service`. Diagnoses why the Pi rebooted, restores critical services, and sends a recap to the user on Telegram.
 
 ## When to use
 Triggered automatically by systemd on boot. Can also be invoked manually with `hermes chat -q --skills pi-reboot-debug "Run pi reboot diagnostics"`.
@@ -35,7 +35,7 @@ If `planned_reboot` is `true` in the health state JSON:
 
 Then determine if this was a crash or a clean shutdown:
 ```bash
-# Check how long the Pi was down
+# Check how long the Pi was up
 uptime
 
 # Check previous boot logs for errors
@@ -89,23 +89,23 @@ Update the state file if anything changed (new services, new issues, etc.) using
 Build a clean Markdown report. Format:
 
 ```
-🔄 *Pi vient de redémarrer*
+🔄 *Pi rebooted*
 
-*Cause probable :* [OOM killer / surchauffe / sous-voltage / kernel panic / inconnu]
-*Durée du uptime avant crash :* [X minutes/heures]
-*Contexte pré-crash :* [temp: X°C, RAM: X MB free, réseau: up/down]
-*Température actuelle :* [X°C]
-*Réseau actuel :* [up/down]
+*Probable cause:* [OOM killer / overheating / under-voltage / kernel panic / unknown]
+*Uptime before crash:* [X minutes/hours]
+*Pre-crash context:* [temp: X°C, RAM: X MB free, network: up/down]
+*Current temperature:* [X°C]
+*Current network:* [up/down]
 
-✅ *Services critiques :* [tous OK / X service(s) restauré(s)]
-[si un service a été redémarré, le lister]
+✅ *Critical services:* [all OK / X service(s) restored]
+[if any service was restarted, list it]
 
-📊 *État rapide :*
-• RAM : [X]G used / [Y]G total
-• Disque : [X]% utilisé
-• Docker : [N] containers actifs
+📊 *Quick status:*
+• RAM: [X]G used / [Y]G total
+• Disk: [X]% used
+• Docker: [N] active containers
 
-[Si problème persistant → suggestion d'action]
+[If persistent problem → suggested action]
 
 _Reboot debug • [timestamp]_
 ```
