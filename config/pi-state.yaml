@@ -1,0 +1,117 @@
+# Pi State File — tracks critical services and resources
+# Updated by pi-reboot-debug and pi-health-monitor skills
+# Read by agents to know what's important on this machine
+
+hostname: pi
+model: Raspberry Pi 5 Model B Rev 1.0
+os: Debian GNU/Linux 13 (trixie)
+kernel_auto_reboot: true  # kernel.panic=10 + systemd watchdog (60s)
+
+# Storage — PNY CS1030 500GB NVMe SSD
+storage:
+  device: /dev/nvme0
+  partition: /dev/nvme0n1p2 (ext4, 469G)
+  boot: /dev/nvme0n1p1 (vfat, 505M)
+  model: PNY CS1030 500GB SSD
+  smart: PASSED
+  available_spare: 100%
+  percentage_used: 4%
+  unsafe_shutdowns_warning: true  # 44/66 = 67% — very high, monitor closely
+
+# Network (WiFi only — eth0 is DOWN)
+network:
+  interface: wlan0
+  ip: 192.168.0.24/24
+  gateway: 192.168.0.1
+  dns:
+    - 89.2.0.1
+    - 89.2.0.2
+  recovery:
+    step_1: "sudo nmcli device connect wlan0"
+    step_2: "sudo systemctl restart NetworkManager"
+    step_3: "sudo ip link set wlan0 down && sleep 2 && sudo ip link set wlan0 up"
+    step_4: "sudo reboot  # last resort if WiFi hardware hung"
+
+# Critical services — must be running after every boot
+critical_services:
+  - ssh.service
+  - docker.service
+  - containerd.service
+  - cron.service
+  - NetworkManager.service
+  - systemd-timesyncd.service
+
+# Important but non-critical
+optional_services:
+  - lightdm.service
+  - bluetooth.service
+  - avahi-daemon.service
+
+# Hermes
+hermes:
+  version: "0.19.0"
+  home: /home/pi/.hermes
+  install: /home/pi/.hermes/hermes-agent (git)
+  cron_jobs:
+    - "5adf1051a9c0: Briefing matinal 8h (0 8 * * *)"
+    - "cc2b4da77538: Pi Health Monitor (every 10 min)"
+  critical_files:
+    - config.yaml
+    - auth.json
+    - .env
+    - pi-state.yaml
+  backup_dir: /home/pi/.hermes/backups
+  backup_manifest: /home/pi/.hermes/backups/critical-files.sha256
+
+# Health thresholds
+thresholds:
+  temp_warn: 75
+  temp_alert: 80
+  temp_critical: 85
+  mem_free_min_mb: 200
+  mem_critical_mb: 100
+  disk_warn_pct: 85
+  disk_alert_pct: 90
+  disk_critical_pct: 95
+  nvme_spare_min_pct: 10       # alert if spare blocks drop below 10%
+  nvme_media_errors_max: 0     # any media error = alert
+  unsafe_shutdowns_increase: 1  # alert if count increases
+
+# Health monitor runtime state
+health_state_file: /var/tmp/pi-health-state.json
+health_pending_reports: /var/tmp/pi-health-pending-reports.txt
+
+# Known issues & fixes
+known_issues:
+  - symptom: "Pi freezes randomly, watchdog reboots"
+    likely_causes:
+      - "Power supply insufficient (need 5V/5A for Pi 5)"
+      - "Overheating under load"
+      - "Kernel/driver bug"
+    checks:
+      - "sudo journalctl -p err -b -1 --no-pager | tail -30"
+      - "vcgencmd get_throttled"
+      - "dmesg | grep -iE 'under-voltage|thermal'"
+
+  - symptom: "Hermes I/O error on config files (telegram-approved.json)"
+    root_cause: "Unsafe shutdown corrupting filesystem — 44/66 shutdowns were unsafe"
+    prevention: "Backups in /home/pi/.hermes/backups/ — restore with cp *.bak ~/.hermes/"
+    fix: "Gateway auto-recovers on restart. If persistent: restore from backup."
+
+  - symptom: "Docker containers not starting"
+    fix: "sudo systemctl restart docker"
+
+  - symptom: "WiFi disconnected / network down"
+    recovery:
+      - "sudo nmcli device connect wlan0"
+      - "sudo systemctl restart NetworkManager"
+      - "sudo ip link set wlan0 down && sleep 2 && sudo ip link set wlan0 up"
+
+  - symptom: "Overheating (temp > 80°C)"
+    mitigation:
+      - "docker stop <heavy containers>"
+      - "Check fan is working"
+      - "Reduce cron job frequency temporarily"
+
+  - symptom: "NVMe SMART errors or spare blocks dropping"
+    action: "Immediate Telegram alert + suggest filesystem check"

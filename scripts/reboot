@@ -1,0 +1,53 @@
+#!/bin/bash
+# Quick reboot script for Pi 5
+# Usage: ~/reboot [reason]
+# Saves state, notifies health monitor this is planned, then reboots
+
+set -e
+
+REASON="${1:-manual reboot}"
+STATE_FILE="/var/tmp/pi-health-state.json"
+BACKUP_SCRIPT="/home/pi/.hermes/scripts/backup-critical-files.sh"
+
+echo "🔄 Pi reboot — $(date)"
+echo "   Raison: $REASON"
+echo ""
+
+# 1. Mark as planned reboot in health state
+if [ -f "$STATE_FILE" ]; then
+    python3 -c "
+import json
+try:
+    with open('$STATE_FILE') as f:
+        state = json.load(f)
+    state['planned_reboot'] = True
+    state['reboot_reason'] = '$REASON'
+    with open('$STATE_FILE', 'w') as f:
+        json.dump(state, f)
+    print('✓ Health state: planned reboot flagged')
+except Exception as e:
+    print(f'⚠ Could not update state: {e}')
+" 2>/dev/null || true
+fi
+
+# 2. Backup critical files
+if [ -f "$BACKUP_SCRIPT" ]; then
+    bash "$BACKUP_SCRIPT" 2>/dev/null && echo "✓ Critical files backed up" || true
+fi
+
+# 3. Sync filesystems
+sync
+echo "✓ Filesystems synced"
+
+# 4. Countdown
+echo ""
+echo "Rebooting in 3..."
+sleep 1
+echo "              2..."
+sleep 1
+echo "              1..."
+sleep 1
+
+# 5. Reboot
+echo "🚀 Rebooting now!"
+sudo reboot

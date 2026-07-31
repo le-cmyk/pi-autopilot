@@ -1,0 +1,9 @@
+# Pi Autopilot — things not to version control
+.env
+*.bak
+*.log
+snapshots/
+*.tar.gz
+.DS_Store
+__pycache__/
+*.pyc

@@ -1,0 +1,20 @@
+[Unit]
+Description=Hermes post-reboot diagnostics
+Documentation=https://hermes-agent.nousresearch.com
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=pi
+Group=pi
+ExecStart=/home/pi/.hermes/scripts/pi-reboot-check.sh
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=300
+Environment=HOME=/home/pi
+Environment=HERMES_HOME=/home/pi/.hermes
+Environment=PATH=/home/pi/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=multi-user.target
