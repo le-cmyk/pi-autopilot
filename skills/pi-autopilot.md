@@ -264,7 +264,10 @@ Combined: cold reboot + aggressive timeouts + Docker fast stop = clean unmount e
 - **Hard power cycles (unplugging) corrupt files.** If Hermes shows I/O errors on startup, check for filesystem corruption. Restore from `~/.hermes/backups/`. Never unplug — use `~/reboot` or wait for the watchdog.
 - **Cron jobs should use free models.** Pin to `nvidia/nemotron-3-ultra-550b-a55b:free` on OpenRouter to avoid paid API costs.
 - **`ps --sort=-%rss` fails on Debian procps.** Use `--sort=-%mem` instead. `--sort=-%cpu` works fine. All monitoring scripts use `%mem` to avoid this.
+- **`hermes -z` flag does NOT exist.** The correct invocation is `hermes chat --query "prompt" --quiet`. The `pi-reboot-check.sh` script uses this. Never use `-z` or `-Q` as shorthand — always use long form in scripts.
+- **Never write crash evidence to `/tmp`.** `/tmp` is tmpfs (volatile, lost on power loss). Always use `/var/tmp` which is on NVMe ext4 and survives unplugs. All monitoring scripts, fallback reports, and crash handlers write to `/var/tmp`.
 - **Companion scripts**: `pi-health-snapshot.sh` (on-demand 20-section health dump), `pi-freeze-forensics.sh` (post-freeze analysis), `pi-freeze-watchdog.sh` (heartbeat + detection).
+- **See `pi-auto-reboot/references/reboot-hardening.md`** for complete reboot hardening: cold vs warm reboot, shutdown timeouts, Docker fast stop, pre-reboot safety sequence, failure patterns.
 
 ## Support Files
 
