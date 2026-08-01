@@ -14,6 +14,7 @@ HERMES="/home/pi/.local/bin/hermes"
 STATE_FILE="/home/pi/.hermes/pi-state.yaml"
 PENDING_REPORTS="/var/tmp/pi-health-pending-reports.txt"
 MAX_WAIT=30  # max seconds to wait for network (agent handles offline gracefully)
+FALLBACK_DIR="/var/tmp"  # NVMe-backed, survives power loss
 
 log() {
     echo "[$(date '+%H:%M:%S')] $*" | systemd-cat -t "$LOG_TAG" -p info
@@ -67,37 +68,51 @@ if [ ! -f "$STATE_FILE" ]; then
     log "WARNING: State file not found at $STATE_FILE"
 fi
 
-# Run Hermes agent with the pi-reboot-debug skill
-# --oneshot (-z): print only the final response, no UI
-# -Q: quiet mode (no spinner, no tool previews)
+# ─── HERMES AGENT DIAGNOSTICS ─────────────────────────────────
+# Use -q (--query) for the prompt and --quiet to suppress UI/banner
 log "Launching Hermes agent for diagnostics..."
-DIAG_OUTPUT=$(
-    $HERMES -z "The Pi just rebooted. Run the full pi-reboot-debug skill procedure:
-        1. Read /home/pi/.hermes/pi-state.yaml and /var/tmp/pi-health-state.json
-        2. Determine reboot cause (check previous logs + health context)
-        3. Verify and restore critical services
-        4. If network is DOWN: cache report to /var/tmp/pi-health-pending-reports.txt
-        5. If network is UP: send report to Telegram AND flush any pending reports" \
-        --skills pi-reboot-debug \
-        -Q \
-        2>&1
-) || {
-    EXIT_CODE=$?
-    log "Hermes agent exited with code $EXIT_CODE"
-}
+DIAG_OUTPUT=""
+EXIT_CODE=0
+
+if [ -x "$HERMES" ]; then
+    DIAG_OUTPUT=$(
+        "$HERMES" chat \
+            --query "The Pi just rebooted. Run the full pi-reboot-debug skill procedure:
+                1. Read /home/pi/.hermes/pi-state.yaml and /var/tmp/pi-health-state.json
+                2. Determine reboot cause (check previous logs + health context)
+                3. Verify and restore critical services
+                4. If network is DOWN: cache report to /var/tmp/pi-health-pending-reports.txt
+                5. If network is UP: send report to Telegram AND flush any pending reports" \
+            --skills pi-reboot-debug \
+            --quiet \
+            2>&1
+    ) || EXIT_CODE=$?
+else
+    log "Hermes binary not found at $HERMES"
+    EXIT_CODE=127
+fi
 
 # Log the output
-echo "$DIAG_OUTPUT" | systemd-cat -t "$LOG_TAG" -p info
+if [ -n "$DIAG_OUTPUT" ]; then
+    echo "$DIAG_OUTPUT" | systemd-cat -t "$LOG_TAG" -p info
+fi
 
-# Fallback: if hermes failed, write a minimal report to /tmp
-if [ -n "${EXIT_CODE:-}" ] && [ "${EXIT_CODE:-0}" -ne 0 ]; then
-    FALLBACK="/tmp/reboot-fallback-$(date +%Y%m%d-%H%M%S).txt"
+# Fallback: if hermes failed, write a report to /var/tmp (NVMe, survives power loss)
+if [ "$EXIT_CODE" -ne 0 ]; then
+    FALLBACK="$FALLBACK_DIR/reboot-fallback-$(date +%Y%m%d-%H%M%S).txt"
     {
         echo "🔄 Pi rebooted — Hermes diagnostic agent failed (exit $EXIT_CODE)"
-        echo "Check logs: journalctl -u hermes-reboot-debug"
+        echo "Time: $(date -Is)"
+        echo "Uptime: $(uptime)"
+        echo "Network: $($NETWORK_UP && echo 'UP' || echo 'DOWN')"
+        echo ""
+        echo "Check logs: journalctl -u hermes-reboot-debug --no-pager -n 100"
         echo "Manual diag: hermes chat -q --skills pi-reboot-debug 'Run pi diagnostics'"
+        echo ""
+        echo "Freeze check result: ${FREEZE_RESULT:-not run}"
+        echo "Pending reports: ${PENDING_COUNT:-0}"
     } > "$FALLBACK"
     log "Fallback report written to $FALLBACK"
 fi
 
-log "=== Post-reboot diagnostics complete ==="
+log "=== Post-reboot diagnostics complete (exit=$EXIT_CODE) ==="

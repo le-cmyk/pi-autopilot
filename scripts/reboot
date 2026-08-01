@@ -1,16 +1,17 @@
 #!/bin/bash
-# Quick reboot script for Pi 5
+# Safe reboot script for Pi 5
+# Ensures clean shutdown: stop Docker, sync, send alert, mark as planned
 # Usage: ~/reboot [reason]
-# Saves state, notifies health monitor this is planned, then reboots
 
 set -e
 
 REASON="${1:-manual reboot}"
 STATE_FILE="/var/tmp/pi-health-state.json"
 BACKUP_SCRIPT="/home/pi/.hermes/scripts/backup-critical-files.sh"
+FREEZE_WATCHDOG="/home/pi/.hermes/scripts/pi-freeze-watchdog.sh"
 
 echo "🔄 Pi reboot — $(date)"
-echo "   Raison: $REASON"
+echo "   Reason: $REASON"
 echo ""
 
 # 1. Mark as planned reboot in health state
@@ -30,24 +31,29 @@ except Exception as e:
 " 2>/dev/null || true
 fi
 
-# 2. Backup critical files
+# 2. Stop Docker containers cleanly (prevents orphan iptables rules)
+if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
+    echo "Stopping Docker containers..."
+    docker stop $(docker ps -q) 2>/dev/null || true
+    echo "✓ Docker containers stopped"
+fi
+
+# 3. Final freeze heartbeat (marks the clean shutdown moment)
+if [ -x "$FREEZE_WATCHDOG" ]; then
+    bash "$FREEZE_WATCHDOG" heartbeat 2>/dev/null || true
+    echo "✓ Final heartbeat written"
+fi
+
+# 4. Backup critical files
 if [ -f "$BACKUP_SCRIPT" ]; then
     bash "$BACKUP_SCRIPT" 2>/dev/null && echo "✓ Critical files backed up" || true
 fi
 
-# 3. Sync filesystems
+# 5. Sync filesystems
 sync
 echo "✓ Filesystems synced"
 
-# 4. Countdown
+# 6. Reboot
 echo ""
-echo "Rebooting in 3..."
-sleep 1
-echo "              2..."
-sleep 1
-echo "              1..."
-sleep 1
-
-# 5. Reboot
-echo "🚀 Rebooting now!"
-sudo reboot
+echo "Rebooting now..."
+exec sudo /usr/sbin/reboot
