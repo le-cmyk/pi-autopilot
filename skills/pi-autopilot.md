@@ -11,9 +11,9 @@ Umbrella skill covering the full Pi 5 autonomous operations stack. Orchestrates 
 
 ## Related Skills
 
-- **pi-health-monitor** — 20-metric health checks every 10 min (temp, network, disk, inodes, RAM, swap, load, I/O wait, D-state, zombies, procs, FDs, GPU mem, PMIC errors, throttling, services, NVMe SMART, file integrity, Hermes Gateway)
-- **pi-reboot-debug** — Post-reboot crash forensics + service restoration + freeze heartbeat check
-- **pi-auto-reboot** — Hardware watchdog + kernel panic configuration + PMIC firmware
+- **pi-health-monitor** — 20-metric health checks every 10 min
+- **pi-reboot-debug** — Post-reboot crash forensics + freeze detection + cold reboot verification
+- **pi-auto-reboot** — Hardware watchdog + kernel panic + PMIC firmware + shutdown hardening
 
 ## State Files
 
@@ -222,7 +222,31 @@ Use `~/reboot` for clean reboots (avoids unsafe shutdowns, flags as planned):
 ~/reboot "kernel update"    # with reason logged
 ```
 
-The script syncs filesystems, backs up critical files, and flags the reboot as planned so pi-reboot-debug doesn't send a crash alert.
+The script stops Docker containers, writes a final freeze heartbeat, backs up critical files, syncs filesystems, marks the reboot as planned (so pi-reboot-debug doesn't send a crash alert), and triggers a cold reboot.
+
+## Shutdown Hardening
+
+Pi 5 firmware defaults to `reboot=w` (warm reboot), which skips PCIe controller reset. This leaves the NVMe in an inconsistent state — causing "orphan cleanup on readonly fs" on every boot. The fix:
+
+```bash
+# Add reboot=cold at the END of /boot/firmware/cmdline.txt (last occurrence wins)
+echo " reboot=cold" | sudo tee -a /boot/firmware/cmdline.txt
+```
+
+Systemd shutdown hardening (`/etc/systemd/system.conf.d/50-shutdown.conf`):
+```ini
+[Manager]
+DefaultTimeoutStopSec=10s   # services get 10s, then SIGKILL
+RebootWatchdogSec=3min       # force reboot if shutdown hangs >3min
+DefaultDeviceTimeoutSec=15s  # don't wait forever for devices
+```
+
+Docker faster shutdown (`/etc/docker/daemon.json`):
+```json
+{"shutdown-timeout": 15}
+```
+
+Combined: cold reboot + aggressive timeouts + Docker fast stop = clean unmount every time.
 
 ## Pitfalls
 
@@ -239,3 +263,10 @@ The script syncs filesystems, backs up critical files, and flags the reboot as p
 - **Reboot rate limit: max 3 reboots per 30 min.** Beyond that, the crash handler stops rebooting and sends an alert-only. Prevents infinite reboot loops from unfixable problems.
 - **Hard power cycles (unplugging) corrupt files.** If Hermes shows I/O errors on startup, check for filesystem corruption. Restore from `~/.hermes/backups/`. Never unplug — use `~/reboot` or wait for the watchdog.
 - **Cron jobs should use free models.** Pin to `nvidia/nemotron-3-ultra-550b-a55b:free` on OpenRouter to avoid paid API costs.
+- **`ps --sort=-%rss` fails on Debian procps.** Use `--sort=-%mem` instead. `--sort=-%cpu` works fine. All monitoring scripts use `%mem` to avoid this.
+- **Companion scripts**: `pi-health-snapshot.sh` (on-demand 20-section health dump), `pi-freeze-forensics.sh` (post-freeze analysis), `pi-freeze-watchdog.sh` (heartbeat + detection).
+
+## Support Files
+
+- **`references/monitoring-architecture.md`** — Full 20-metric monitoring stack: freeze watchdog, health monitor, hardware safety net, data survivability, companion scripts. Read this for the complete picture of what's being tracked and how.
+- **`references/hermes-crash-loop-forensics.md`** — Hermes Gateway crash loop investigation and rate-limit design details.
